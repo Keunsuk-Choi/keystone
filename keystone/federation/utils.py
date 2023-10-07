@@ -13,6 +13,7 @@
 """Utilities for Federation Extension."""
 
 import ast
+import json
 import re
 
 import flask
@@ -438,6 +439,8 @@ def transform_to_group_ids(group_names, mapping_id,
 def get_assertion_params_from_env():
     LOG.debug('Environment variables: %s', flask.request.environ)
     prefix = CONF.federation.assertion_prefix
+    payload_key = CONF.federation.assertion_payload
+    assertion_params = {}
     for k, v in list(flask.request.environ.items()):
         if not k.startswith(prefix):
             continue
@@ -446,7 +449,16 @@ def get_assertion_params_from_env():
         # correctly encoding the data.
         if not isinstance(v, str) and getattr(v, 'decode', False):
             v = v.decode('ISO-8859-1')
-        yield (k, v)
+        if payload_key and k == payload_key:
+            try:
+                assertion_params.update(json.loads(v))
+            except json.JSONDecodeError:
+                LOG.debug('Could not parse assertion payload at %s as JSON',
+                          payload_key)
+        else:
+            assertion_params[k] = v
+        LOG.debug('%s', payload_key)
+    return assertion_params
 
 
 class RuleProcessor(object):
@@ -532,8 +544,16 @@ class RuleProcessor(object):
         # This will create a new dictionary where the values are arrays, and
         # any multiple values are stored in the arrays.
         LOG.debug('assertion data: %s', assertion_data)
-        assertion = {n: v.split(';') for n, v in assertion_data.items()
-                     if isinstance(v, str)}
+        # assertion = {n: v.split(';') for n, v in assertion_data.items() 
+        #              if isinstance(v, str)}
+        assertion = {}
+        for k, v in assertion_data.items():
+            if isinstance(v, str):
+                assertion[k] = v.split(';')
+            elif isinstance(v, list):
+                assertion[k] = v
+            elif isinstance(v, dict):
+                assertion[k] = [v]
         LOG.debug('assertion: %s', assertion)
         identity_values = []
 
@@ -586,7 +606,7 @@ class RuleProcessor(object):
         # due to the way we do direct mapping substitutions today (see
         # function _update_local_mapping() )
         if 'name' in identity_value['groups']:
-            group_names_list = self._ast_literal_eval(identity_value['groups'])
+            group_names_list = self._expand_listlike(identity_value['groups'])
 
             def convert_json(group):
                 if group.startswith('JSON:'):
@@ -608,13 +628,40 @@ class RuleProcessor(object):
                         "specified.")
                 msg = msg % {'identity_value': identity_value}
                 raise exception.ValidationError(msg)
-            group_names_list = self._ast_literal_eval(
-                identity_value['groups'])
+            group_names_list = self._expand_listlike(identity_value['groups'])
             domain = identity_value['domain']
             group_dicts = [{'name': name, 'domain': domain} for name in
                            group_names_list]
         return group_dicts
 
+    def _normalize_projects(self, identity_value):
+        project_dicts = []
+        for project in identity_value['projects']:
+            project_names_list = self._expand_listlike(project['name'])
+            role_names_list = []
+            for role in project['roles']:
+                role_names_list.extend(self._expand_listlike(role['name']))
+            project_dicts.extend([{'name': p_name, 'roles': [
+                                    {'name': r_name}
+                                    for r_name in role_names_list
+                                 ]} for p_name in project_names_list])
+        return project_dicts
+
+    def _expand_listlike(self, value):
+        """If value is a string representation of a list, parse it to a real
+        list. Also, if the provided value contains only one element, it will
+        be parsed as a simple string, and not a list or the representation
+        of a list.
+        This is necessary due to the way we do direct mapping substitutions
+        today (see function _update_local_mapping())
+        """
+        try:
+            value_list = ast.literal_eval(value)
+        except (ValueError, SyntaxError):
+            value_list = [value]
+        LOG.debug("Numbers in value_list are: {}".format(' '.join(map(str, value_list))))
+        return value_list
+    
     def _transform(self, identity_values):
         """Transform local mappings, to an easier to understand format.
 
@@ -705,15 +752,11 @@ class RuleProcessor(object):
                 group_dicts = self._normalize_groups(identity_value)
                 group_names.extend(group_dicts)
             if 'group_ids' in identity_value:
-                # If identity_values['group_ids'] is a string representation
-                # of a list, parse it to a real list. Also, if the provided
-                # group_ids parameter contains only one element, it will be
-                # parsed as a simple string, and not a list or the
-                # representation of a list.
-                group_ids.update(
-                    self._ast_literal_eval(identity_value['group_ids']))
+                group_ids.update(self._expand_listlike(
+                    identity_value['group_ids']))
             if 'projects' in identity_value:
-                projects = identity_value['projects']
+                project_dicts = self._normalize_projects(identity_value)
+                projects.extend(project_dicts)
 
         normalize_user(user)
 
