@@ -22,7 +22,7 @@ remove_dangling_assignments = cfg.StrOpt(
 When auto-provisioning resources when a federated user authenticates, also
 remove any dangling role assignments that are no longer declared in the
 idp mapping. This can ensure that users are offboarded from projects that
-they should no longer be a member of. Defaults to false.
+they should no longer be a member of. Defaults to false!
 """))
 
 
