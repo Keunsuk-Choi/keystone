@@ -27,11 +27,13 @@ from keystone import exception
 from keystone.i18n import _
 from keystone.resource import schema
 from keystone.server import flask as ks_flask
+from keystone.keycloak import variables as k_vars
 
 CONF = keystone.conf.CONF
 ENFORCER = rbac_enforcer.RBACEnforcer
 PROVIDERS = provider_api.ProviderAPIs
-group_url = CONF.keycloak.group_url
+# group_url = CONF.keycloak.group_url
+group_url = k_vars.group_url
 
 
 def _build_project_target_enforcement():
@@ -221,6 +223,7 @@ class ProjectResource(ks_flask.ResourceBase):
             project_id,
             initiator=self.audit_initiator)
         return None, http.client.NO_CONTENT
+    
 
 
 class _ProjectTagResourceBase(ks_flask.ResourceBase):
