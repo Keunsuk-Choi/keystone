@@ -21,6 +21,7 @@ from keystone.common import json_home
 from keystone.common import provider_api
 from keystone.common import rbac_enforcer
 from keystone.common import validation
+from keystone.keycloak import core as groups
 import keystone.conf
 from keystone import exception
 from keystone.i18n import _
@@ -30,6 +31,7 @@ from keystone.server import flask as ks_flask
 CONF = keystone.conf.CONF
 ENFORCER = rbac_enforcer.RBACEnforcer
 PROVIDERS = provider_api.ProviderAPIs
+group_url = CONF.keycloak.group_url
 
 
 def _build_project_target_enforcement():
@@ -179,6 +181,8 @@ class ProjectResource(ks_flask.ResourceBase):
                 initiator=self.audit_initiator)
         except (exception.DomainNotFound, exception.ProjectNotFound) as e:
             raise exception.ValidationError(e)
+        
+        groups.create_group(group_url, project['name'])
         return self.wrap_member(ref), http.client.CREATED
 
     def patch(self, project_id):
@@ -204,6 +208,11 @@ class ProjectResource(ks_flask.ResourceBase):
 
         DELETE /v3/projects/{project_id}
         """
+        project = self._get_project(project_id)
+        project = self._normalize_dict(project)
+        name = project['project']['name']
+        groups.delete_group(group_url, name)
+        
         ENFORCER.enforce_call(
             action='identity:delete_project',
             build_target=_build_project_target_enforcement
